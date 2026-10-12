@@ -5,7 +5,6 @@ import httpx
 class SupabaseRepository:
     def __init__(self, base_url: str, service_role_key: str, timeout: float = 20.0):
         self.base_url = base_url.rstrip("/") + "/rest/v1"
-        self.key = service_role_key
         self.client = httpx.Client(
             timeout=timeout,
             headers={
@@ -35,12 +34,21 @@ class SupabaseRepository:
         )
         response.raise_for_status()
 
-    def insert(self, table: str, values: dict[str, Any], *, upsert: bool = False) -> dict[str, Any] | None:
+    def insert(
+        self,
+        table: str,
+        values: dict[str, Any],
+        *,
+        on_conflict: str | None = None,
+    ) -> dict[str, Any] | None:
         headers = {"Prefer": "return=representation"}
-        if upsert:
-            headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+        params = {}
+        if on_conflict:
+            params["on_conflict"] = on_conflict
+            headers["Prefer"] = "resolution=ignore-duplicates,return=representation"
         response = self.client.post(
             f"{self.base_url}/{table}",
+            params=params,
             json=values,
             headers=headers,
         )

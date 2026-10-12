@@ -1,31 +1,25 @@
 # MVP implementation checklist
 
 ## 1. Supabase
-
-1. Create a Supabase project.
-2. Run `supabase/migrations/001_initial_schema.sql` in SQL Editor.
-3. Keep the service role key private.
-4. For the personal setup, insert one product row via SQL Editor. Fill `url`, `store_domain`, `product_name`, `currency`, and `is_active=true`. Leave `current_price` null for first-run baseline or set it only if you have verified a matching price.
-
-Example insert:
+1. Buat project Supabase.
+2. Jalankan `supabase/migrations/001_initial_schema.sql` di SQL Editor.
+3. Simpan service role key hanya di server/worker.
+4. Tambahkan produk melalui SQL Editor. Contoh ini placeholder; ganti dengan URL produk nyata yang boleh diakses:
 
 ```sql
 insert into public.products (url, store_domain, product_name, currency, is_active)
 values ('https://YOUR-STORE.example/product', 'YOUR-STORE.example', 'Product name', 'IDR', true);
 ```
 
-This is a placeholder. Replace it with an actual product URL from a store you are allowed to access.
+Kosongkan `current_price` pada produk baru agar harga valid pertama menjadi baseline dan tidak mengirim alert.
 
 ## 2. GitHub Actions
+Masuk ke Settings → Secrets and variables → Actions → New repository secret. Isi semua secrets yang dibutuhkan sesuai README. Gunakan tab Actions → Daily Price Check → Run workflow untuk uji awal.
 
-Open repository Settings → Secrets and variables → Actions → New repository secret. Add every required key listed in the main README. The schedule uses 01:00 UTC, or 08:00 in Asia/Jakarta. Use Actions → Daily Price Check → Run workflow to test manually after setting secrets.
+## 3. WhatsApp
+Konfigurasikan Meta app dan WhatsApp Business Account. Pastikan penerima telah memberikan opt-in dan template yang digunakan telah disetujui bila diwajibkan. Jangan pernah menyimpan token di file kode atau log.
 
-## 3. WhatsApp Cloud API
-
-Configure a Meta app and WhatsApp Business Account, then add the recipient's explicit opt-in. The approved template must match `WHATSAPP_TEMPLATE_NAME`, `WHATSAPP_TEMPLATE_LANGUAGE`, and six body text parameters in the order documented in README. Never place tokens in files or logs.
-
-## 4. Test locally
-
+## 4. Uji lokal
 ```bash
 cd worker
 python -m venv .venv
@@ -36,15 +30,12 @@ pytest
 python -m app.main
 ```
 
-## 5. Store-specific extractor
+## 5. Extractor website
+Validasi harga yang terbaca terhadap harga untuk varian yang benar. Jika JSON-LD tidak memberikan harga, implementasikan extractor domain-spesifik. Jangan melewati CAPTCHA atau kontrol akses.
 
-First test the real product page manually. Confirm extracted price corresponds to the correct variant, currency and offer. If generic JSON-LD doesn't provide a price, implement a domain-specific extractor. Do not bypass CAPTCHA, login walls or access controls.
-
-## 6. Production hardening before wider use
-
-- Add redirect-by-redirect URL validation and egress restrictions at the network layer.
-- Use a durable notification queue/outbox and reconcile ambiguous WhatsApp API timeouts to avoid duplicate sends.
-- Add tests for extractor output and the notification state machine.
-- Move from sequential per-product requests to a bounded worker pool only when needed.
-- Implement the Next.js dashboard and product CRUD API.
-- Run a manual test with a Meta test number and a real price change before relying on the system.
+## 6. Hardening sebelum produksi
+- Jalankan tests pada semua perubahan kode.
+- Validasi URL dan setiap redirect serta pertimbangkan egress controls jaringan.
+- Rekonsiliasi kegagalan WhatsApp yang ambigu sebelum retry agar tidak menggandakan pesan.
+- Tambahkan dashboard Next.js, authentication, product CRUD API, grafik riwayat, dan status worker.
+- Jalankan uji end-to-end dengan produk dan nomor uji Meta sebelum mengandalkan notifikasi.

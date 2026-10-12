@@ -9,7 +9,7 @@ import httpx
 
 from .config import Settings
 from .db import SupabaseRepository
-from .extractors.jsonld import extract_product, PriceExtractionError
+from .extractors.jsonld import extract_product
 from .whatsapp import WhatsAppNotifier
 
 
@@ -17,11 +17,13 @@ def validate_public_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError("Product URLs must use HTTPS.")
-    host = parsed.hostname.lower()
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing embedded credentials are not allowed.")
+    host = parsed.hostname.rstrip(".").lower()
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
         raise ValueError("Local hosts are not allowed.")
     try:
-        records = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        records = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise ValueError("Could not resolve product URL host.") from exc
     if not records:
@@ -35,21 +37,31 @@ def validate_public_url(url: str) -> str:
 
 def fetch_html(url: str, settings: Settings) -> str:
     validate_public_url(url)
-    with httpx.Client(
-        follow_redirects=False,
-        timeout=settings.request_timeout_seconds,
-        headers={"User-Agent": settings.user_agent, "Accept": "text/html"},
-    ) as client:
-        response = client.get(url)
-        response.raise_for_status()
+    # Validate every redirect target to avoid redirect-based SSRF.
+    current_url = url
+    for _ in range(5):
+        validate_public_url(current_url)
+        with httpx.Client(
+            follow_redirects=False,
+            timeout=settings.request_timeout_seconds,
+            headers={"User-Agent": settings.user_agent, "Accept": "text/html"},
+        ) as client:
+            response = client.get(current_url)
         if response.is_redirect:
-            raise ValueError("Redirect detected; add explicit redirect validation for this store.")
+            location = response.headers.get("location")
+            if not location:
+                raise ValueError("Redirect response did not include a Location header.")
+            from urllib.parse import urljoin
+            current_url = urljoin(current_url, location)
+            continue
+        response.raise_for_status()
         content_type = response.headers.get("content-type", "")
         if "text/html" not in content_type.lower():
             raise ValueError(f"Unexpected content type: {content_type}")
         if len(response.content) > 5_000_000:
             raise ValueError("Product page exceeds the 5 MB HTML limit.")
         return response.text
+    raise ValueError("Too many product page redirects.")
 
 
 def run_checks(settings: Settings) -> dict:
@@ -105,15 +117,23 @@ def run_checks(settings: Settings) -> dict:
                     # Unique key makes each observed downward step independently auditable.
                     checked_at = update["last_checked_at"]
                     notification_key = f"{product_id}:{previous}:{current}:{checked_at}"
-                    log = repo.insert("notification_logs", {
-                        "product_id": product_id,
-                        "old_price": str(previous),
-                        "new_price": str(current),
-                        "currency": currency,
-                        "channel": "whatsapp",
-                        "idempotency_key": notification_key,
-                        "status": "pending",
-                    })
+                    # Check-and-insert on the unique idempotency key so a rerun
+                    # does not create another send for the same observed drop.
+                    try:
+                        repo.insert("notification_logs", {
+                            "product_id": product_id,
+                            "old_price": str(previous),
+                            "new_price": str(current),
+                            "currency": currency,
+                            "channel": "whatsapp",
+                            "idempotency_key": notification_key,
+                            "status": "pending",
+                        })
+                    except httpx.HTTPStatusError as insert_exc:
+                        if insert_exc.response.status_code == 409:
+                            print(f"Duplicate notification suppressed for product {product_id}")
+                            continue
+                        raise
                     try:
                         provider_id = notifier.send_price_drop(
                             product_name=update["product_name"],

@@ -137,7 +137,6 @@ def run_checks(settings: Settings) -> dict:
                     })
                     errors += 1
                     print(f"Notification failed for product {product_id}: {exc}")
-                    continue
             except Exception as exc:
                 errors += 1
                 print(f"Price check failed for product {product_id}: {exc}")

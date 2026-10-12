@@ -1,0 +1,37 @@
+name: Web Dashboard Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-check.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package.json
+      - name: Install dependencies
+        run: npm install
+      - name: Type check
+        run: npm run typecheck
+      - name: Build dashboard
+        run: npm run build

@@ -41,7 +41,8 @@ def fetch_html(url: str, settings: Settings) -> str:
 
 def run_checks(settings: Settings) -> dict:
     repo = SupabaseRepository(
-        settings.supabase_url, settings.supabase_service_role_key,
+        settings.supabase_url,
+        settings.supabase_service_role_key,
         timeout=settings.request_timeout_seconds,
     )
     notifier = WhatsAppNotifier(settings)
@@ -77,8 +78,6 @@ def run_checks(settings: Settings) -> dict:
                     "last_check_status": "success",
                     "last_error": None,
                 }
-
-                # First persist the baseline/observation; do not alert if this is the first price.
                 repo.insert("price_history", {
                     "product_id": product_id,
                     "price": str(current),
@@ -90,26 +89,28 @@ def run_checks(settings: Settings) -> dict:
                 repo.update("products", {"id": f"eq.{product_id}"}, update)
                 succeeded += 1
 
-                if previous is None:
+                if previous is None or current >= previous:
                     continue
                 if currency != product.get("currency", "IDR"):
                     print(f"Currency changed for product {product_id}; alert suppressed for safety.")
                     continue
-                if current >= previous:
-                    continue
 
-                # The same old/new price step can only create one log row, even if
-                # a GitHub Actions job is manually rerun for the same product.
+                # Each unique old->new step is logged once; an empty representation
+                # means PostgREST ignored an existing idempotency key.
                 notification_key = f"{product_id}:{previous}:{current}"
-                created = repo.insert("notification_logs", {
-                    "product_id": product_id,
-                    "old_price": str(previous),
-                    "new_price": str(current),
-                    "currency": currency,
-                    "channel": "whatsapp",
-                    "idempotency_key": notification_key,
-                    "status": "pending",
-                }, on_conflict="idempotency_key")
+                created = repo.insert(
+                    "notification_logs",
+                    {
+                        "product_id": product_id,
+                        "old_price": str(previous),
+                        "new_price": str(current),
+                        "currency": currency,
+                        "channel": "whatsapp",
+                        "idempotency_key": notification_key,
+                        "status": "pending",
+                    },
+                    on_conflict="idempotency_key",
+                )
                 if not created:
                     print(f"Duplicate notification suppressed for product {product_id}")
                     continue
@@ -123,29 +124,39 @@ def run_checks(settings: Settings) -> dict:
                         currency=currency,
                     )
                     status = "sent" if provider_id else "failed"
-                    repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
-                        "status": status,
-                        "provider_message_id": provider_id,
-                        "sent_at": datetime.now(timezone.utc).isoformat() if provider_id else None,
-                        "error_message": None if provider_id else "WhatsApp is not configured; no message sent.",
-                    })
+                    repo.update(
+                        "notification_logs",
+                        {"idempotency_key": f"eq.{notification_key}"},
+                        {
+                            "status": status,
+                            "provider_message_id": provider_id,
+                            "sent_at": datetime.now(timezone.utc).isoformat() if provider_id else None,
+                            "error_message": None if provider_id else "WhatsApp is not configured; no message sent.",
+                        },
+                    )
                     if not provider_id:
                         errors += 1
                 except Exception as exc:
-                    repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
-                        "status": "failed", "error_message": str(exc)[:1000],
-                    })
+                    repo.update(
+                        "notification_logs",
+                        {"idempotency_key": f"eq.{notification_key}"},
+                        {"status": "failed", "error_message": str(exc)[:1000]},
+                    )
                     errors += 1
                     print(f"Notification failed for product {product_id}: {exc}")
             except Exception as exc:
                 errors += 1
                 print(f"Price check failed for product {product_id}: {exc}")
                 try:
-                    repo.update("products", {"id": f"eq.{product_id}"}, {
-                        "last_checked_at": datetime.now(timezone.utc).isoformat(),
-                        "last_check_status": "error",
-                        "last_error": str(exc)[:1000],
-                    })
+                    repo.update(
+                        "products",
+                        {"id": f"eq.{product_id}"},
+                        {
+                            "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                            "last_check_status": "error",
+                            "last_error": str(exc)[:1000],
+                        },
+                    )
                 except Exception as update_exc:
                     print(f"Failed to persist product error {product_id}: {update_exc}")
             finally:
@@ -154,14 +165,18 @@ def run_checks(settings: Settings) -> dict:
         status = "success" if errors == 0 else ("partial" if succeeded else "failed")
         summary = {"checked": checked, "succeeded": succeeded, "errors": errors}
         if run_id:
-            repo.update("price_check_runs", {"id": f"eq.{run_id}"}, {
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-                "status": status,
-                "products_checked": checked,
-                "products_succeeded": succeeded,
-                "errors_count": errors,
-                "summary": summary,
-            })
+            repo.update(
+                "price_check_runs",
+                {"id": f"eq.{run_id}"},
+                {
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "status": status,
+                    "products_checked": checked,
+                    "products_succeeded": succeeded,
+                    "errors_count": errors,
+                    "summary": summary,
+                },
+            )
         return summary
     finally:
         repo.close()

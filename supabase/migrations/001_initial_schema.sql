@@ -69,6 +69,9 @@ create table if not exists public.notification_settings (
   constraint whatsapp_number_nonempty check (length(trim(whatsapp_number)) > 0)
 );
 
+-- Dashboard users must only see runs that belong to their own products. A run row
+-- does not contain user_id in this single-user worker design, so access is restricted
+-- to server-side service-role clients. Do not expose run rows directly from the browser.
 create table if not exists public.price_check_runs (
   id uuid primary key default gen_random_uuid(),
   started_at timestamptz not null default now(),
@@ -121,8 +124,8 @@ create policy "Users manage own notification settings" on public.notification_se
   with check (auth.uid() = user_id);
 
 drop policy if exists "Users read own check runs" on public.price_check_runs;
-create policy "Users read own check runs" on public.price_check_runs
-  for select to authenticated using (true);
+-- No direct authenticated-user SELECT policy for check runs. Read them only through
+-- a server-side API that verifies the signed-in user and filters appropriately.
 
 comment on table public.products is 'Products tracked by the personal price tracker';
 comment on table public.price_history is 'Valid price observations only';

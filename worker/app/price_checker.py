@@ -98,6 +98,49 @@ def run_checks(settings: Settings) -> dict:
                 if current >= previous:
                     continue
 
+                # The same old/new price step can only create one log row, even if
+                # a GitHub Actions job is manually rerun for the same product.
+                notification_key = f"{product_id}:{previous}:{current}"
+                created = repo.insert("notification_logs", {
+                    "product_id": product_id,
+                    "old_price": str(previous),
+                    "new_price": str(current),
+                    "currency": currency,
+                    "channel": "whatsapp",
+                    "idempotency_key": notification_key,
+                    "status": "pending",
+                }, on_conflict="idempotency_key")
+                if not created:
+                    print(f"Duplicate notification suppressed for product {product_id}")
+                    continue
+
+                try:
+                    provider_id = notifier.send_price_drop(
+                        product_name=update["product_name"],
+                        url=product["url"],
+                        old_price=previous,
+                        new_price=current,
+                        currency=currency,
+                    )
+                    status = "sent" if provider_id else "failed"
+                    repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
+                        "status": status,
+                        "provider_message_id": provider_id,
+                        "sent_at": datetime.now(timezone.utc).isoformat() if provider_id else None,
+                        "error_message": None if provider_id else "WhatsApp is not configured; no message sent.",
+                    })
+                    if not provider_id:
+                        errors += 1
+                except Exception as exc:
+                    repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
+                        "status": "failed", "error_message": str(exc)[:1000],
+                    })
+                    errors += 1
+                    print(f"Notification failed for product {product_id}: {exc}")
+                    continue
+                if current >= previous:
+                    continue
+
                 notification_key = f"{product_id}:{previous}:{current}"
                 # Ignore duplicate observations of the same downward step. An empty
                 # representation means PostgREST ignored the existing unique key.

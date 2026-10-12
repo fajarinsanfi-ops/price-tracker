@@ -116,7 +116,7 @@ def run_checks(settings: Settings) -> dict:
                 if previous is not None and currency == product.get("currency", "IDR") and current < previous:
                     # Unique key makes each observed downward step independently auditable.
                     checked_at = update["last_checked_at"]
-                    notification_key = f"{product_id}:{previous}:{current}:{checked_at}"
+                    notification_key = f"{product_id}:{previous}:{current}"
                     # Check-and-insert on the unique idempotency key so a rerun
                     # does not create another send for the same observed drop.
                     try:

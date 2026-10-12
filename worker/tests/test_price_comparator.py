@@ -1,13 +1,5 @@
 from decimal import Decimal
-
-
-def is_price_drop(previous, current, previous_currency, current_currency):
-    return (
-        previous is not None
-        and current > 0
-        and previous_currency == current_currency
-        and current < previous
-    )
+from app.price_checker import is_price_drop
 
 
 def test_price_drop():

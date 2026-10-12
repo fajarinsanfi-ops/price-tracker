@@ -8,3 +8,5 @@ __pycache__/
 .DS_Store
 node_modules/
 .next/
+apps/web/node_modules/
+apps/web/.next/

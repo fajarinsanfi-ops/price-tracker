@@ -114,7 +114,10 @@ def run_checks(settings: Settings) -> dict:
 
                 # Each unique old->new step is logged once; an empty representation
                 # means PostgREST ignored an existing idempotency key.
-                notification_key = f"{product_id}:{previous}:{current}"
+                # Include the previous observation timestamp: the exact same price
+                # drop can happen again after a later rise and should alert again.
+                previous_observation = product.get("last_checked_at") or "initial"
+                notification_key = f"{product_id}:{previous}:{current}:{previous_observation}"
                 created = repo.insert(
                     "notification_logs",
                     {

@@ -1,12 +1,22 @@
-# Web dashboard (planned)
+# Price Tracker Web Dashboard
 
-The Next.js dashboard is not implemented in this starter commit. Planned screens:
+Next.js App Router dashboard UI scaffold.
 
-- `/login` — private single-user authentication.
-- `/dashboard` — product totals, last run status, latest price drops.
-- `/products/new` — submit product URL and review extracted title/price.
-- `/products/[id]` — price history and monitoring status.
+## Run locally
 
-Use Supabase Auth for the browser session. Keep `SUPABASE_SERVICE_ROLE_KEY`, WhatsApp tokens, and worker job tokens server-only; never prefix secrets with `NEXT_PUBLIC_`.
+```bash
+npm install
+npm run dev
+```
 
-The worker can currently be run by GitHub Actions or from a local Python environment while the UI is developed.
+Open http://localhost:3000.
+
+## Current behavior
+
+- Responsive dashboard layout and product table.
+- Add URL modal validates basic URL format.
+- URLs are stored in React state only and disappear on refresh.
+- Product prices, activity metrics, and chart are not connected to real data.
+- Supabase auth, product CRUD API, history chart, and dashboard persistence remain to be implemented.
+
+Use `.env.example` for future public Supabase URL and anon key only. Never expose the service role key or WhatsApp token in a browser bundle.

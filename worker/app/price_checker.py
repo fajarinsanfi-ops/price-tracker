@@ -57,7 +57,11 @@ def run_checks(settings: Settings) -> dict:
     )
     notifier = WhatsAppNotifier(settings)
     started = datetime.now(timezone.utc).isoformat()
-    run = repo.insert("price_check_runs", {"started_at": started, "status": "running"})
+    run = None
+    try:
+        run = repo.insert("price_check_runs", {"started_at": started, "status": "running"})
+    except Exception as exc:
+        print(f"Could not create price-check run log: {exc}")
     run_id = run["id"] if run else None
     checked = succeeded = errors = 0
 
@@ -178,18 +182,21 @@ def run_checks(settings: Settings) -> dict:
         status = "success" if errors == 0 else ("partial" if succeeded else "failed")
         summary = {"checked": checked, "succeeded": succeeded, "errors": errors}
         if run_id:
-            repo.update(
-                "price_check_runs",
-                {"id": f"eq.{run_id}"},
-                {
-                    "finished_at": datetime.now(timezone.utc).isoformat(),
-                    "status": status,
-                    "products_checked": checked,
-                    "products_succeeded": succeeded,
-                    "errors_count": errors,
-                    "summary": summary,
-                },
-            )
+            try:
+                repo.update(
+                    "price_check_runs",
+                    {"id": f"eq.{run_id}"},
+                    {
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                        "status": status,
+                        "products_checked": checked,
+                        "products_succeeded": succeeded,
+                        "errors_count": errors,
+                        "summary": summary,
+                    },
+                )
+            except Exception as exc:
+                print(f"Could not finalize price-check run log: {exc}")
         return summary
     finally:
         repo.close()

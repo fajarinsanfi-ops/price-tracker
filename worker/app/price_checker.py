@@ -12,6 +12,16 @@ from .url_safety import validate_public_url
 from .whatsapp import WhatsAppNotifier
 
 
+def is_price_drop(previous: Decimal | None, current: Decimal, previous_currency: str, current_currency: str) -> bool:
+    """Return true only for a valid downward price change in the same currency."""
+    return (
+        previous is not None
+        and current > 0
+        and previous_currency == current_currency
+        and current < previous
+    )
+
+
 def fetch_html(url: str, settings: Settings) -> str:
     current_url = url
     for _ in range(5):
@@ -89,10 +99,13 @@ def run_checks(settings: Settings) -> dict:
                 repo.update("products", {"id": f"eq.{product_id}"}, update)
                 succeeded += 1
 
-                if previous is None or current >= previous:
+                previous_currency = product.get("currency", "IDR")
+                if previous is None:
                     continue
-                if currency != product.get("currency", "IDR"):
+                if currency != previous_currency:
                     print(f"Currency changed for product {product_id}; alert suppressed for safety.")
+                    continue
+                if not is_price_drop(previous, current, previous_currency, currency):
                     continue
 
                 # Each unique old->new step is logged once; an empty representation

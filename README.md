@@ -13,6 +13,7 @@ MVP personal price tracker untuk memantau harga produk dari URL website toko, me
 > Ini adalah starter code. Dashboard web belum diimplementasikan; konfigurasi Supabase, WhatsApp, GitHub Secrets, dan pengujian URL toko nyata tetap diperlukan sebelum penggunaan produksi.
 
 ## Struktur
+- `apps/web/`: responsive Next.js dashboard UI scaffold (currently local browser state only).
 - `worker/app/`: Python price checker, Supabase repository, URL safety, JSON-LD extractor, WhatsApp sender.
 - `worker/tests/`: unit tests.
 - `supabase/migrations/001_initial_schema.sql`: database schema.
@@ -56,7 +57,7 @@ Siapkan WhatsApp Business Account, token server-side, phone number ID, nomor pen
 Generic extractor membaca Schema.org Product/Offer JSON-LD dari HTML. Ini belum tentu bekerja untuk halaman yang merender harga di browser, mengharuskan login/pilihan lokasi, atau memakai markup nonstandar. Buat extractor khusus per domain bila perlu. Hormati ketentuan website dan jangan melewati CAPTCHA/access controls.
 
 ## Batasan MVP
-- Dashboard Next.js dan product CRUD API belum dibuat.
+- Dashboard Next.js tersedia sebagai UI scaffold, tetapi belum terhubung ke Supabase, autentikasi, atau API CRUD.
 - Belum ada extractor toko spesifik yang tervalidasi tanpa URL nyata.
 - Belum melakukan tes end-to-end terhadap akun Supabase dan Meta.
 - Karena pengecekan sekali sehari, penurunan singkat di antara dua jadwal tidak terdeteksi.

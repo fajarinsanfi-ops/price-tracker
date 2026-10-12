@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
-from urllib.parse import urlparse
-import ipaddress
-import socket
+from urllib.parse import urlparse, urljoin
 import time
 
 import httpx
@@ -15,8 +13,6 @@ from .whatsapp import WhatsAppNotifier
 
 
 def fetch_html(url: str, settings: Settings) -> str:
-    validate_public_url(url)
-    # Validate every redirect target to avoid redirect-based SSRF.
     current_url = url
     for _ in range(5):
         validate_public_url(current_url)
@@ -30,7 +26,6 @@ def fetch_html(url: str, settings: Settings) -> str:
             location = response.headers.get("location")
             if not location:
                 raise ValueError("Redirect response did not include a Location header.")
-            from urllib.parse import urljoin
             current_url = urljoin(current_url, location)
             validate_public_url(current_url)
             continue
@@ -71,70 +66,77 @@ def run_checks(settings: Settings) -> dict:
                 previous_value = product.get("current_price")
                 previous = Decimal(str(previous_value)) if previous_value is not None else None
 
-                # Keep observed page identity useful; the user can edit it later.
+                checked_at = datetime.now(timezone.utc).isoformat()
                 update = {
                     "product_name": extracted["product_name"] or product["product_name"],
                     "image_url": extracted["image_url"] or product.get("image_url"),
                     "store_domain": urlparse(product["url"]).hostname,
                     "currency": currency,
                     "current_price": str(current),
-                    "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                    "last_checked_at": checked_at,
                     "last_check_status": "success",
                     "last_error": None,
                 }
+
+                # First persist the baseline/observation; do not alert if this is the first price.
                 repo.insert("price_history", {
                     "product_id": product_id,
                     "price": str(current),
                     "currency": currency,
                     "availability": extracted["availability"],
                     "source": extracted["source"],
-                    "checked_at": update["last_checked_at"],
+                    "checked_at": checked_at,
                 })
                 repo.update("products", {"id": f"eq.{product_id}"}, update)
                 succeeded += 1
 
-                if previous is not None and currency == product.get("currency", "IDR") and current < previous:
-                    # Unique key makes each observed downward step independently auditable.
-                    checked_at = update["last_checked_at"]
-                    notification_key = f"{product_id}:{previous}:{current}"
-                    # Check-and-insert on the unique idempotency key so a rerun
-                    # does not create another send for the same observed drop.
-                    try:
-                        repo.insert("notification_logs", {
-                            "product_id": product_id,
-                            "old_price": str(previous),
-                            "new_price": str(current),
-                            "currency": currency,
-                            "channel": "whatsapp",
-                            "idempotency_key": notification_key,
-                            "status": "pending",
-                        })
-                    except httpx.HTTPStatusError as insert_exc:
-                        if insert_exc.response.status_code == 409:
-                            print(f"Duplicate notification suppressed for product {product_id}")
-                            continue
-                        raise
-                    try:
-                        provider_id = notifier.send_price_drop(
-                            product_name=update["product_name"],
-                            url=product["url"],
-                            old_price=previous,
-                            new_price=current,
-                            currency=currency,
-                        )
-                        status = "sent" if provider_id else "failed"
-                        repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
-                            "status": status,
-                            "provider_message_id": provider_id,
-                            "sent_at": datetime.now(timezone.utc).isoformat() if provider_id else None,
-                            "error_message": None if provider_id else "WhatsApp is not configured; no message sent.",
-                        })
-                    except Exception as exc:
-                        repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
-                            "status": "failed", "error_message": str(exc)[:1000],
-                        })
+                if previous is None:
+                    continue
+                if currency != product.get("currency", "IDR"):
+                    print(f"Currency changed for product {product_id}; alert suppressed for safety.")
+                    continue
+                if current >= previous:
+                    continue
+
+                notification_key = f"{product_id}:{previous}:{current}"
+                # Ignore duplicate observations of the same downward step. An empty
+                # representation means PostgREST ignored the existing unique key.
+                created = repo.insert("notification_logs", {
+                    "product_id": product_id,
+                    "old_price": str(previous),
+                    "new_price": str(current),
+                    "currency": currency,
+                    "channel": "whatsapp",
+                    "idempotency_key": notification_key,
+                    "status": "pending",
+                }, on_conflict="idempotency_key")
+                if not created:
+                    print(f"Duplicate notification suppressed for product {product_id}")
+                    continue
+
+                try:
+                    provider_id = notifier.send_price_drop(
+                        product_name=update["product_name"],
+                        url=product["url"],
+                        old_price=previous,
+                        new_price=current,
+                        currency=currency,
+                    )
+                    status = "sent" if provider_id else "failed"
+                    repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
+                        "status": status,
+                        "provider_message_id": provider_id,
+                        "sent_at": datetime.now(timezone.utc).isoformat() if provider_id else None,
+                        "error_message": None if provider_id else "WhatsApp is not configured; no message sent.",
+                    })
+                    if not provider_id:
                         errors += 1
-                        print(f"Notification failed for product {product_id}: {exc}")
+                except Exception as exc:
+                    repo.update("notification_logs", {"idempotency_key": f"eq.{notification_key}"}, {
+                        "status": "failed", "error_message": str(exc)[:1000],
+                    })
+                    errors += 1
+                    print(f"Notification failed for product {product_id}: {exc}")
             except Exception as exc:
                 errors += 1
                 print(f"Price check failed for product {product_id}: {exc}")
@@ -146,7 +148,8 @@ def run_checks(settings: Settings) -> dict:
                     })
                 except Exception as update_exc:
                     print(f"Failed to persist product error {product_id}: {update_exc}")
-            time.sleep(settings.request_delay_seconds)
+            finally:
+                time.sleep(settings.request_delay_seconds)
 
         status = "success" if errors == 0 else ("partial" if succeeded else "failed")
         summary = {"checked": checked, "succeeded": succeeded, "errors": errors}

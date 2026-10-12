@@ -3,8 +3,16 @@ name: Worker Tests
 on:
   push:
     branches: [main]
+    paths:
+      - "worker/**"
+      - "supabase/**"
+      - ".github/workflows/tests.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "worker/**"
+      - "supabase/**"
+      - ".github/workflows/tests.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,6 +21,9 @@ permissions:
 jobs:
   test-worker:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,7 +32,6 @@ jobs:
           cache: pip
           cache-dependency-path: worker/requirements.txt
       - name: Install dependencies
-        run: pip install -r worker/requirements.txt
+        run: pip install -r requirements.txt
       - name: Run unit tests
-        working-directory: worker
         run: pytest -q

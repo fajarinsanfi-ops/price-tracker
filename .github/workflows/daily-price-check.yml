@@ -17,6 +17,16 @@ jobs:
   check-prices:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      WHATSAPP_API_VERSION: ${{ secrets.WHATSAPP_API_VERSION }}
+      WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+      WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+      WHATSAPP_RECIPIENT_NUMBER: ${{ secrets.WHATSAPP_RECIPIENT_NUMBER }}
+      WHATSAPP_TEMPLATE_NAME: ${{ secrets.WHATSAPP_TEMPLATE_NAME }}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${{ secrets.WHATSAPP_TEMPLATE_LANGUAGE }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -31,15 +41,73 @@ jobs:
       - name: Install dependencies
         run: pip install -r worker/requirements.txt
 
+      - name: Validate Supabase configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=0
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "::error::GitHub Actions secret SUPABASE_URL is not configured."
+            missing=1
+          fi
+
+          if [[ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+            echo "::error::GitHub Actions secret SUPABASE_SERVICE_ROLE_KEY is not configured."
+            missing=1
+          fi
+
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+          if [[ "$SUPABASE_URL" != https://* ]]; then
+            echo "::warning::SUPABASE_URL is not HTTPS. For a production self-hosted Supabase instance, use its public HTTPS URL."
+          fi
+
+      - name: Test Supabase REST API connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          base_url = os.environ["SUPABASE_URL"].rstrip("/")
+          key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          url = f"{base_url}/rest/v1/products?select=id&limit=1"
+
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "apikey": key,
+                  "Authorization": f"Bearer {key}",
+                  "Accept": "application/json",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  status = response.status
+          except urllib.error.HTTPError as exc:
+              body = exc.read(500).decode("utf-8", errors="replace")
+              print(f"::error::Supabase REST API returned HTTP {exc.code}: {body}")
+              sys.exit(1)
+          except Exception as exc:
+              print(f"::error::Could not connect to Supabase REST API: {exc}")
+              sys.exit(1)
+
+          if status != 200:
+              print(f"::error::Unexpected Supabase HTTP status: {status}")
+              sys.exit(1)
+
+          print("Supabase REST API connectivity check passed.")
+          print(f"Endpoint: {base_url}/rest/v1/products")
+          PY
+
       - name: Run daily price check
         working-directory: worker
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          WHATSAPP_API_VERSION: ${{ secrets.WHATSAPP_API_VERSION }}
-          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
-          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
-          WHATSAPP_RECIPIENT_NUMBER: ${{ secrets.WHATSAPP_RECIPIENT_NUMBER }}
-          WHATSAPP_TEMPLATE_NAME: ${{ secrets.WHATSAPP_TEMPLATE_NAME }}
-          WHATSAPP_TEMPLATE_LANGUAGE: ${{ secrets.WHATSAPP_TEMPLATE_LANGUAGE }}
         run: python -m app.main

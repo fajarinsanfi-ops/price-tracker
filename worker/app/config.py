@@ -22,9 +22,17 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         url = os.getenv("SUPABASE_URL", "").rstrip("/")
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        # Prefer the current Supabase server-side secret key, while keeping
+        # the legacy service_role key as a backward-compatible fallback.
+        key = (
+            os.getenv("SUPABASE_SECRET_KEY", "").strip()
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+        )
         if not url or not key:
-            raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured.")
+            raise RuntimeError(
+                "SUPABASE_URL and one of SUPABASE_SECRET_KEY or "
+                "SUPABASE_SERVICE_ROLE_KEY must be configured."
+            )
         return cls(
             supabase_url=url,
             supabase_service_role_key=key,
